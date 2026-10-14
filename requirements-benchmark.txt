@@ -1,0 +1,14 @@
+cloudpickle==3.1.2
+ImageIO==2.38.1
+joblib==1.6.0
+lazy-loader==0.6
+narwhals==2.27.1
+networkx==3.7
+numpy==2.5.4
+packaging==26.3
+pillow==12.3.0
+scikit-image==0.26.0
+scikit-learn==1.9.1
+scipy==1.18.1
+threadpoolctl==3.7.0
+tifffile==2026.9.20

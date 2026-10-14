@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "solar-cell-inspection"
+version = "1.0.0"
+description = "Reproducible classical computer vision for solar-cell defect screening"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26,<3", "pillow>=10,<13", "scikit-learn>=1.5,<2", "scikit-image>=0.24,<0.27"]
+[project.scripts]
+solar-inspect = "solarvision.cli:main"
+[tool.setuptools.packages.find]
+include = ["solarvision*"]
