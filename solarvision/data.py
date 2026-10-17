@@ -1,10 +1,9 @@
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import hashlib
 import json
 import shutil
 import urllib.request
 import zipfile
-from PIL import Image
 import numpy as np
 from sklearn.model_selection import train_test_split
 
@@ -15,43 +14,60 @@ PREFIX = f'elpv-dataset-{REVISION}/src/elpv_dataset/data/'
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
+def safe_path(folder, name):
+    """Resolve portable dataset paths without Windows aliases or directory escapes."""
+    rel = PurePosixPath(name)
+    if (not name or '\\' in name or ':' in name or '\x00' in name
+            or rel.is_absolute() or not rel.parts or '..' in rel.parts
+            or rel.as_posix() != name
+            or any(part.endswith(('.', ' ')) or PureWindowsPath(part).is_reserved() for part in rel.parts)):
+        raise ValueError('Unsafe data path')
+    root = Path(folder).resolve()
+    target = root.joinpath(*rel.parts).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError('Data path escapes dataset directory')
+    return target
+
 def prepare(folder, archive=None):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     if (folder / 'manifest.json').exists():
         raise ValueError('Data already prepared; use a fresh directory')
-    archive = Path(archive) if archive else folder / 'upstream.zip'
+    license_path = safe_path(folder, 'DATA_LICENSE.txt')
+    manifest_path = safe_path(folder, 'manifest.json')
+    archive = Path(archive) if archive else safe_path(folder, 'upstream.zip')
     if not archive.exists():
         urllib.request.urlretrieve(URL, archive)
     with zipfile.ZipFile(archive) as z:
+        entries = []
         for name in z.namelist():
             if not name.startswith(PREFIX) or name.endswith('/'):
                 continue
-            rel = PurePosixPath(name[len(PREFIX):])
-            if '..' in rel.parts or rel.is_absolute():
-                raise ValueError('Unsafe archive path')
-            target = folder / str(rel)
+            entries.append((name, safe_path(folder, name[len(PREFIX):])))
+        # Validate all members before writing any of them.
+        for name, target in entries:
             target.parent.mkdir(parents=True, exist_ok=True)
             with z.open(name) as src, target.open('wb') as dst:
                 shutil.copyfileobj(src, dst)
         license_text = z.read(f'elpv-dataset-{REVISION}/LICENSE').decode()
-    (folder / 'DATA_LICENSE.txt').write_text(license_text, encoding='utf-8')
+    license_path.write_text(license_text, encoding='utf-8')
     records = read_labels(folder)
     checksums = {r['path']: digest(folder / r['path']) for r in records}
     manifest = {'upstream': URL, 'revision': REVISION, 'archive_sha256': digest(archive),
                 'labels_sha256': digest(folder / 'labels.csv'), 'images': checksums,
                 'license': 'CC BY-NC-SA 4.0', 'count': len(records)}
-    (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     return manifest
 
 def read_labels(folder):
     records = []
     seen = set()
-    for line in (Path(folder) / 'labels.csv').read_text().splitlines():
+    for line in (Path(folder) / 'labels.csv').read_text(encoding='utf-8').splitlines():
         path, probability, kind = line.split()
         rel = PurePosixPath(path)
         p = float(probability)
-        if rel.is_absolute() or '..' in rel.parts or rel.parts[0] != 'images':
+        safe_path(folder, path)
+        if len(rel.parts) < 2 or rel.parts[0] != 'images':
             raise ValueError('Invalid image path')
         if path in seen or not np.isfinite(p) or not 0 <= p <= 1 or kind not in ('mono', 'poly'):
             raise ValueError('Invalid or duplicate annotation')
@@ -62,6 +78,7 @@ def read_labels(folder):
     return records
 
 def load(folder):
+    from PIL import Image
     folder = Path(folder)
     manifest = json.loads((folder / 'manifest.json').read_text())
     if digest(folder / 'labels.csv') != manifest['labels_sha256']:
